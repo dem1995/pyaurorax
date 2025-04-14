@@ -16,6 +16,9 @@ else:
 from typing import Any, Callable, List, Optional, Sequence, Union, cast
 from pathlib import Path
 from collections import OrderedDict
+import numpy as np
+import datetime
+from pyaurorax import pyaurorax
 
 
 class AuroraTorchDataset(Dataset):
@@ -25,17 +28,26 @@ class AuroraTorchDataset(Dataset):
     """
 
     def __init__(
-        self, file_paths: Sequence[Union[str, Path]], key: str = 'data/images', transform: Optional[Callable] = None
+        self,
+        file_paths: Sequence[Union[str, Path]],
+        key: str = 'data/images',
+        transform: Optional[
+            Callable[[torch.Tensor], torch.Tensor]
+        ] = None
     ) -> None:
         self.file_paths: List[str] = [str(fp) for fp in file_paths]
         self.key: str = key
-        self.h5_files: List[Optional[h5py.File]] = [None] * len(self.file_paths)
+        self.h5_files: List[Optional[h5py.File]] = (
+            [None] * len(self.file_paths)
+        )
         self.open_file_indices: OrderedDict[int, None] = OrderedDict()  # For LRU caching
 
         # Get system file limit and set max open files safely
         # soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
         soft_limit = 1024
-        self.max_open_files: int = min(len(self.file_paths), max(10, soft_limit // 2))
+        self.max_open_files: int = min(
+            len(self.file_paths), max(10, soft_limit // 2)
+        )
 
         # Determine how many samples are in each file.
         self.lengths: List[int] = []
@@ -52,7 +64,9 @@ class AuroraTorchDataset(Dataset):
                     # print(f"Dataset at {path} has {len(dset)} samples.")
 
         cumulative_lengths: np.ndarray = np.cumsum([0] + self.lengths)
-        self.cumulative_lengths: List[int] = cast(List[int], cumulative_lengths.tolist())
+        self.cumulative_lengths: List[int] = cast(
+            List[int], cumulative_lengths.tolist()
+        )
         self.total_len: int = self.cumulative_lengths[-1]
         self.transform: Optional[Callable] = transform
 
@@ -87,12 +101,14 @@ class AuroraTorchDataset(Dataset):
 
         return cast(List[torch.Tensor], samples)
 
-    def _resolve_index(self, index: int) -> tuple[int, int]:
+    def _resolve_index(self, index: int) -> tuple[np.signedinteger, int]:
         file_idx = np.searchsorted(self.cumulative_lengths, index, side='right') - 1
         local_index = index - self.cumulative_lengths[file_idx]
         return file_idx, local_index
 
-    def _get_dataset(self, file_idx: int) -> h5py.Dataset:
+    def _get_dataset(self, file_idx: int | np.signedinteger) -> h5py.Dataset:
+        file_idx = int(file_idx)  # Convert to int
+
         if self.h5_files[file_idx] is None:
             self._maybe_close_files_to_free_space(exclude={file_idx})
             self.h5_files[file_idx] = h5py.File(self.file_paths[file_idx], 'r')
@@ -526,4 +542,3 @@ class AugmentedAuroraTorchDataset(Dataset):
 
         base_dataset = AuroraTorchDataset.from_download_details(*args, **kwargs)
         return cls(base_dataset)
-    
